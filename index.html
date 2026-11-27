@@ -110,7 +110,7 @@ h2{font-size:21px;margin-bottom:6px}
   <button class="btn hide" id="reveal">🔓 REVEAL YOUR KEY</button>
 
   <p class="expire-note hide" id="expireNote">
-    This verification link expires 15 minutes after it was created.
+    This verification link expires 30 minutes after it was created.
   </p>
 
   <a class="btn ghost hide" id="homeBtn" href="">↩ GO TO HOME</a>
@@ -137,7 +137,7 @@ h2{font-size:21px;margin-bottom:6px}
 <script>
 const API = "https://mk-keygen.f08944948.workers.dev";
 const MUSIC_URL = "https://www.image2url.com/r2/default/audio/1795786062660-fec1bff3-c9de-4b02-adf6-e716586dd5c3.aac";
-const LINK_LIFETIME_MS = 15 * 60 * 1000;
+const LINK_LIFETIME_MS = 30 * 60 * 1000;
 
 const $ = id => document.getElementById(id);
 
@@ -287,9 +287,10 @@ $("go").onclick=async function(){
     "Connecting to secure server...",
     "Checking device integrity...",
     "Verifying network...",
-    "Allocating key slot...",
-    "Creating Lockr verification...",
-    "Finalizing..."
+    "Creating VPLink verification...",
+    "Creating ShrinkMe verification...",
+    "Creating URLKing verification...",
+    "Preparing VIP Claim Page..."
   ];
 
   const site=location.origin+location.pathname;
@@ -321,12 +322,12 @@ $("go").onclick=async function(){
 
   if(d.url){
     $("fill").style.width="100%";
-    log("Verification link ready. Redirecting...");
+    log("Three-step verification link ready. Redirecting...");
     chime();
     await sleep(800);
     location.href=d.url;
   }else{
-    log("Server error: "+(d.error||"Try again"),"e");
+    log("Server error: "+(d.details||d.error||"Try again"),"e");
     beep(250,"sawtooth",.2);
     reset();
   }
@@ -355,7 +356,6 @@ window.addEventListener("pageshow",resetHomeView);
 
 const params=new URLSearchParams(location.search);
 const T=params.get("t");
-const V=params.get("v");
 
 let claimExpired=false;
 let expiryTimer=null;
@@ -424,23 +424,21 @@ function fail(m){
   beep(250,"sawtooth",.25);
 }
 
+// ===== CLAIM PAGE =====
+
 if(T){
   $("home").classList.add("hide");
   $("claim").classList.remove("hide");
   $("homeBtn").href=location.pathname;
 
-  if(!V){
-    fail("Verification information is missing. Please complete Lockr verification first.");
-  }else{
-    const createdAt=tokenCreatedAt(T);
+  const createdAt=tokenCreatedAt(T);
 
-    if(!createdAt||Date.now()-createdAt>=LINK_LIFETIME_MS){
-      showExpired();
-    }else{
-      $("expireNote").classList.remove("hide");
-      startExpiryClock(createdAt);
-      doClaim();
-    }
+  if(!createdAt||Date.now()-createdAt>=LINK_LIFETIME_MS){
+    showExpired();
+  }else{
+    $("expireNote").classList.remove("hide");
+    startExpiryClock(createdAt);
+    doClaim();
   }
 }
 
@@ -451,9 +449,9 @@ async function doClaim(){
 
   try{
     const response=await fetch(
-      API+"/api/claim?t="+encodeURIComponent(T)+
-      "&v="+encodeURIComponent(V)
+      API+"/api/claim?t="+encodeURIComponent(T)
     );
+
     d=await response.json();
   }catch(e){
     return fail("Server unreachable. Reload the page.");
