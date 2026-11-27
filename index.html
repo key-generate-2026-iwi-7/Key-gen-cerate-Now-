@@ -69,7 +69,6 @@ h2{font-size:21px;margin-bottom:6px}
 <canvas id="fx"></canvas>
 <div class="bait adsbox ad-banner textads" id="bait">&nbsp;</div>
 
-<!-- HOME -->
 <main class="card" id="home">
   <div class="logo">
     <img src="https://i.ibb.co/MDCxNK9y/1000047156.jpg" alt="MK VIP KEYS Logo">
@@ -97,7 +96,6 @@ h2{font-size:21px;margin-bottom:6px}
   </p>
 </main>
 
-<!-- CLAIM -->
 <main class="card hide" id="claim">
   <div class="big" id="cIcon">⏳</div>
   <h2 id="cTitle">Verifying…</h2>
@@ -137,21 +135,17 @@ h2{font-size:21px;margin-bottom:6px}
 <div class="toast" id="toast"></div>
 
 <script>
-/* ===== CONFIG ===== */
 const API = "https://mk-keygen.f08944948.workers.dev";
 const MUSIC_URL = "https://www.image2url.com/r2/default/audio/1795786062660-fec1bff3-c9de-4b02-adf6-e716586dd5c3.aac";
 const LINK_LIFETIME_MS = 15 * 60 * 1000;
-/* ================== */
 
 const $ = id => document.getElementById(id);
 
-/* --- MUSIC: preload before Reveal tap --- */
 const music = new Audio(MUSIC_URL);
 music.preload = "auto";
 music.loop = true;
 music.volume = 0.6;
 
-/* --- sounds (Web Audio) --- */
 let AC;
 
 function beep(f,t,d,v){
@@ -180,7 +174,6 @@ document.addEventListener("pointerdown",e=>{
   if(e.target.closest("button,a"))beep(520,"sine",.06);
 });
 
-/* --- floating particles --- */
 (function(){
   const c=$("fx"),x=c.getContext("2d");
   let W,H,P=[];
@@ -228,7 +221,6 @@ function toast(m){
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
-/* --- AdBlock detection --- */
 let blocked=false;
 
 async function chkAd(){
@@ -255,7 +247,6 @@ async function chkAd(){
 chkAd();
 setInterval(chkAd,2000);
 
-/* --- VPN check --- */
 async function waitVpnOff(){
   $("vp").classList.add("on");
   beep(220,"sawtooth",.25);
@@ -271,7 +262,6 @@ async function waitVpnOff(){
   $("vp").classList.remove("on");
 }
 
-/* --- HOME: generate --- */
 const initialLog='<div class="d">[SYSTEM] Ready. Tap generate to begin.</div>';
 
 const log=(m,c)=>{
@@ -298,7 +288,7 @@ $("go").onclick=async function(){
     "Checking device integrity...",
     "Verifying network...",
     "Allocating key slot...",
-    "Creating verification link...",
+    "Creating Lockr verification...",
     "Finalizing..."
   ];
 
@@ -308,7 +298,11 @@ $("go").onclick=async function(){
     method:"POST",
     headers:{"content-type":"application/json"},
     body:JSON.stringify({site})
-  }).then(r=>r.json()).catch(()=>({error:1}));
+  }).then(async r=>{
+    const data=await r.json();
+    if(!r.ok)throw new Error(data.details||data.error||"Server error");
+    return data;
+  }).catch(e=>({error:e.message}));
 
   for(let i=0;i<L.length;i++){
     log(L[i]);
@@ -327,12 +321,12 @@ $("go").onclick=async function(){
 
   if(d.url){
     $("fill").style.width="100%";
-    log("Link ready ✓ Redirecting...");
+    log("Verification link ready. Redirecting...");
     chime();
     await sleep(800);
     location.href=d.url;
   }else{
-    log("Server error. Try again.","e");
+    log("Server error: "+(d.error||"Try again"),"e");
     beep(250,"sawtooth",.2);
     reset();
   }
@@ -345,7 +339,6 @@ function reset(){
   $("fill").style.width="0";
 }
 
-/* --- Reset home after Back navigation --- */
 function resetHomeView(){
   if(new URLSearchParams(location.search).has("t"))return;
 
@@ -360,8 +353,9 @@ function resetHomeView(){
 
 window.addEventListener("pageshow",resetHomeView);
 
-/* --- CLAIM page: 15-minute expiry --- */
-const T=new URLSearchParams(location.search).get("t");
+const params=new URLSearchParams(location.search);
+const T=params.get("t");
+const V=params.get("v");
 
 let claimExpired=false;
 let expiryTimer=null;
@@ -416,41 +410,51 @@ function startExpiryClock(createdAt){
   check();
 }
 
+function fail(m){
+  if(claimExpired)return;
+
+  $("cIcon").textContent="⚠️";
+  $("cTitle").textContent="VERIFICATION FAILED";
+  $("cMsg").textContent=m;
+  $("cKey").classList.add("hide");
+  $("reveal").classList.add("hide");
+  $("homeBtn").classList.remove("hide");
+  $("homeBtn").href=location.pathname;
+
+  beep(250,"sawtooth",.25);
+}
+
 if(T){
   $("home").classList.add("hide");
   $("claim").classList.remove("hide");
   $("homeBtn").href=location.pathname;
 
-  const createdAt=tokenCreatedAt(T);
-
-  if(!createdAt||Date.now()-createdAt>=LINK_LIFETIME_MS){
-    showExpired();
+  if(!V){
+    fail("Verification information is missing. Please complete Lockr verification first.");
   }else{
-    $("expireNote").classList.remove("hide");
-    startExpiryClock(createdAt);
-    doClaim();
+    const createdAt=tokenCreatedAt(T);
+
+    if(!createdAt||Date.now()-createdAt>=LINK_LIFETIME_MS){
+      showExpired();
+    }else{
+      $("expireNote").classList.remove("hide");
+      startExpiryClock(createdAt);
+      doClaim();
+    }
   }
 }
 
-function fail(m){
-  if(claimExpired)return;
-
-  $("cIcon").textContent="⚠️";
-  $("cTitle").textContent="Failed";
-  $("cMsg").textContent=m;
-  $("homeBtn").classList.remove("hide");
-
-  beep(250,"sawtooth",.25);
-}
-
-/* --- Claim key from Worker --- */
 async function doClaim(){
   if(claimExpired)return;
 
   let d;
 
   try{
-    d=await(await fetch(API+"/api/claim?t="+encodeURIComponent(T))).json();
+    const response=await fetch(
+      API+"/api/claim?t="+encodeURIComponent(T)+
+      "&v="+encodeURIComponent(V)
+    );
+    d=await response.json();
   }catch(e){
     return fail("Server unreachable. Reload the page.");
   }
@@ -460,16 +464,18 @@ async function doClaim(){
   if(d.vpn){
     $("cTitle").textContent="VPN detected";
     $("cMsg").textContent="Turn off your VPN to continue.";
-
     await waitVpnOff();
-
     if(!claimExpired)return doClaim();
     return;
   }
 
   if(d.error){
     if(/expired/i.test(d.error))return showExpired();
-    return fail(d.error);
+    return fail(d.message||d.error);
+  }
+
+  if(!d.key){
+    return fail("Verification could not be confirmed. Please try again.");
   }
 
   $("cIcon").textContent="✅";
@@ -480,7 +486,6 @@ async function doClaim(){
 
   $("reveal").classList.remove("hide");
 
-  /* --- REVEAL: Start music immediately on tap --- */
   $("reveal").onclick=function(){
     if(claimExpired)return;
 
@@ -501,7 +506,6 @@ async function doClaim(){
     burst();
   };
 
-  /* --- COPY KEY --- */
   $("copy").onclick=()=>{
     if(claimExpired)return;
 
@@ -516,7 +520,6 @@ async function doClaim(){
   };
 }
 
-/* --- Celebration burst --- */
 function burst(){
   const c=$("fx");
   const x=c.getContext("2d");
