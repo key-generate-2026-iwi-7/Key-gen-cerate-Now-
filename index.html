@@ -45,6 +45,7 @@ h2{font-size:21px;margin-bottom:6px}
 @keyframes flash{to{background:rgba(85,0,0,.95)}}
 .bait{position:absolute;left:-9999px;width:10px;height:10px}
 .toast{position:fixed;left:50%;bottom:30px;transform:translate(-50%,40px);opacity:0;padding:11px 20px;border-radius:99px;background:#1b1608;border:1px solid var(--line);color:var(--g1);font-size:13px;font-weight:700;transition:.35s;z-index:60}.toast.on{opacity:1;transform:translate(-50%,0)}
+.expire-note{font-size:12px;color:#ffd76a;margin:10px 0 16px}
 </style>
 </head>
 <body>
@@ -72,7 +73,8 @@ h2{font-size:21px;margin-bottom:6px}
     <button class="btn" id="copy">📋 COPY KEY</button>
     <p class="msg" style="margin:14px 0 0" id="cInfo"></p></div>
   <button class="btn hide" id="reveal">🔓 REVEAL YOUR KEY</button>
-  <a class="btn ghost hide" id="back" href="">⬅ BACK</a>
+  <p class="expire-note hide" id="expireNote">This verification link expires 15 minutes after it was created.</p>
+  <a class="btn ghost hide" id="homeBtn" href="">↩ GO TO HOME</a>
 </main>
 
 <div class="ov" id="ab"><div><div class="big">🚫</div><h2>AD BLOCKER DETECTED</h2><p class="msg">Please turn off your ad blocker to continue.<br>This screen unlocks automatically.</p></div></div>
@@ -81,8 +83,9 @@ h2{font-size:21px;margin-bottom:6px}
 
 <script>
 /* ===== CONFIG ===== */
-const API = "https://mk-keygen.f08944948.workers.dev"; // your Worker URL
-const MUSIC_URL = "";                                   // direct .mp3 link for key page
+const API = "https://mk-keygen.f08944948.workers.dev";
+const MUSIC_URL = "";
+const LINK_LIFETIME_MS = 15 * 60 * 1000;
 /* ================== */
 const $ = id => document.getElementById(id);
 
@@ -116,6 +119,7 @@ while(true){await sleep(3000);try{const v=await(await fetch(API+"/api/vpn")).jso
 $("vp").classList.remove("on")}
 
 /* --- HOME: generate --- */
+const initialLog = '<div class="d">[SYSTEM] Ready. Tap generate to begin.</div>';
 const log=(m,c)=>{const d=document.createElement("div");if(c)d.className=c;d.textContent="> "+m;$("log").appendChild(d);$("log").scrollTop=1e9};
 let busy=false;
 $("go").onclick=async function(){
@@ -132,22 +136,123 @@ $("go").onclick=async function(){
 };
 function reset(){busy=false;$("go").disabled=false;$("bar").style.display="none";$("fill").style.width="0"}
 
-/* --- CLAIM view (opened from shortener with ?t=) --- */
-const T=new URLSearchParams(location.search).get("t");
-if(T){$("home").classList.add("hide");$("claim").classList.remove("hide");$("back").href=location.pathname;doClaim()}
+/* When browser Back restores the home page from bfcache, clear stale progress/logs. */
+function resetHomeView(){
+  if(new URLSearchParams(location.search).has("t"))return;
+  busy=false;
+  $("home").classList.remove("hide");
+  $("claim").classList.add("hide");
+  $("go").disabled=false;
+  $("bar").style.display="none";
+  $("fill").style.width="0";
+  $("log").innerHTML=initialLog;
+}
+window.addEventListener("pageshow",resetHomeView);
 
-function fail(m){$("cIcon").textContent="⚠️";$("cTitle").textContent="Failed";$("cMsg").textContent=m;$("back").classList.remove("hide");beep(250,"sawtooth",.25)}
+/* --- CLAIM page: expiry is based on the signed token's original creation time.
+   This means refresh/back-forward navigation cannot restart the 15-minute timer. */
+const T=new URLSearchParams(location.search).get("t");
+let claimExpired=false;
+let expiryTimer=null;
+
+function tokenCreatedAt(token){
+  try{
+    const part=token.split(".")[0];
+    if(!part)return 0;
+    let b64=part.replace(/-/g,"+").replace(/_/g,"/");
+    while(b64.length%4)b64+="=";
+    const payload=JSON.parse(atob(b64));
+    return Number(payload.t)||0;
+  }catch(e){return 0}
+}
+
+function showExpired(){
+  if(claimExpired)return;
+  claimExpired=true;
+  if(expiryTimer)clearTimeout(expiryTimer);
+  $("cIcon").textContent="⌛";
+  $("cTitle").textContent="LINK EXPIRED";
+  $("cMsg").textContent="This verification link has expired. Please return to the home page and generate a new link.";
+  $("cKey").classList.add("hide");
+  $("reveal").classList.add("hide");
+  $("expireNote").classList.add("hide");
+  $("homeBtn").classList.remove("hide");
+  $("homeBtn").href=location.pathname;
+}
+
+function startExpiryClock(createdAt){
+  const deadline=createdAt+LINK_LIFETIME_MS;
+  const check=()=>{
+    const remaining=deadline-Date.now();
+    if(remaining<=0){showExpired();return}
+    expiryTimer=setTimeout(check,Math.min(remaining,1000));
+  };
+  check();
+}
+
+if(T){
+  $("home").classList.add("hide");
+  $("claim").classList.remove("hide");
+  $("homeBtn").href=location.pathname;
+  const createdAt=tokenCreatedAt(T);
+  if(!createdAt || Date.now()-createdAt>=LINK_LIFETIME_MS){
+    showExpired();
+  }else{
+    $("expireNote").classList.remove("hide");
+    startExpiryClock(createdAt);
+    doClaim();
+  }
+}
+
+function fail(m){
+  if(claimExpired)return;
+  $("cIcon").textContent="⚠️";
+  $("cTitle").textContent="Failed";
+  $("cMsg").textContent=m;
+  $("homeBtn").classList.remove("hide");
+  beep(250,"sawtooth",.25);
+}
+
 async function doClaim(){
-  let d;try{d=await(await fetch(API+"/api/claim?t="+encodeURIComponent(T))).json()}catch(e){return fail("Server unreachable. Reload the page.")}
-  if(d.vpn){$("cTitle").textContent="VPN detected";$("cMsg").textContent="Turn off your VPN to continue.";await waitVpnOff();return doClaim()}
-  if(d.error)return fail(d.error);
-  $("cIcon").textContent="✅";$("cTitle").textContent="Verification complete";
+  if(claimExpired)return;
+  let d;
+  try{d=await(await fetch(API+"/api/claim?t="+encodeURIComponent(T))).json()}
+  catch(e){return fail("Server unreachable. Reload the page.")}
+  if(claimExpired)return;
+  if(d.vpn){
+    $("cTitle").textContent="VPN detected";
+    $("cMsg").textContent="Turn off your VPN to continue.";
+    await waitVpnOff();
+    if(!claimExpired) return doClaim();
+    return;
+  }
+  if(d.error){
+    if(/expired/i.test(d.error))return showExpired();
+    return fail(d.error);
+  }
+  $("cIcon").textContent="✅";
+  $("cTitle").textContent="Verification complete";
   $("cMsg").textContent="Your key is ready. Tap below to reveal it.";
-  $("keyTxt").textContent=d.key;$("cInfo").textContent="Valid for "+d.hours+" hours after first login • 1 key = 1 device";
+  $("keyTxt").textContent=d.key;
+  $("cInfo").textContent="Valid for "+d.hours+" hours after first login • 1 key = 1 device";
   $("reveal").classList.remove("hide");
-  $("reveal").onclick=function(){this.classList.add("hide");$("cKey").classList.remove("hide");$("cIcon").textContent="🎉";$("cTitle").textContent="Your VIP Key";$("cMsg").textContent="Copy it and paste inside the app.";chime();burst();
-    if(MUSIC_URL){const a=new Audio(MUSIC_URL);a.loop=true;a.volume=.6;a.play().catch(()=>{})}};
-  $("copy").onclick=()=>navigator.clipboard.writeText(d.key).then(()=>{$("copy").textContent="✓ COPIED";toast("Key copied")}).catch(()=>toast("Long-press the key to copy"));
+  $("reveal").onclick=function(){
+    if(claimExpired)return;
+    this.classList.add("hide");
+    $("cKey").classList.remove("hide");
+    $("expireNote").classList.add("hide");
+    $("cIcon").textContent="🎉";
+    $("cTitle").textContent="Your VIP Key";
+    $("cMsg").textContent="Copy it and paste inside the app.";
+    chime();burst();
+    if(MUSIC_URL){const a=new Audio(MUSIC_URL);a.loop=true;a.volume=.6;a.play().catch(()=>{})}
+  };
+  $("copy").onclick=()=>{
+    if(claimExpired)return;
+    navigator.clipboard.writeText(d.key)
+      .then(()=>{$("copy").textContent="✓ COPIED";toast("Key copied")})
+      .catch(()=>toast("Long-press the key to copy"));
+  };
 }
 
 /* --- celebration burst --- */
